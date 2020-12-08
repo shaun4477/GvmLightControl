@@ -488,6 +488,7 @@ void update_screen_status() {
       if (saturation != -1) 
         M5.Lcd.printf("Sat. %d", saturation);
       M5.Lcd.println(); 
+      M5.Lcd.printf("Battery %0.1f %%\n", getBatteryLevel(M5.Axp.GetBatVoltage()) * 100);
       break;
     case 0:   
       if (light_on != -1) 
@@ -516,7 +517,6 @@ void update_screen_status() {
   }
   // M5.Lcd.print("IP: ");
   // M5.Lcd.println(WiFi.localIP());
-
 }
 
 void loop() {
@@ -528,12 +528,14 @@ void loop() {
   if (millis() - last_button_millis > 10000 && !lcd_off) {
     lcd_off = 1;
     M5.Axp.SetLDO2(false);
+    Serial.printf("Battery %% is %f\n", getBatteryLevel(M5.Axp.GetBatVoltage()));
   }
   
   M5.BtnA.read();
   if (M5.BtnA.wasPressed()) {
     button_pressed = 0;
     Serial.println("Home button pressed");
+    Serial.printf("Battery %% is %f\n", getBatteryLevel(M5.Axp.GetBatVoltage()));
   }
 
   // 0x01 long press(1s), 0x02 short press
@@ -558,7 +560,7 @@ void loop() {
       lcd_off = 0;
     } else {
       int change = button_pressed;
-      if (set_mode == -1 && button_pressed == 0) {
+      if (button_pressed == 0) {
         set_mode++;
         if (set_mode > 5)
           set_mode = -1;
