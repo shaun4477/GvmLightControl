@@ -1,5 +1,11 @@
 #include "WiFi.h"
+#ifdef ARDUINO_M5Stack_Core_ESP32
+#include <M5Stack.h>
+#elif defined(ARDUINO_M5Stick_C) 
 #include <M5StickC.h>
+#else 
+#error "This code works on m5stick-c or m5stack core"
+#endif
 #include <lwip/sockets.h>
 #include <lwip/netdb.h>
 #include <errno.h>
@@ -105,11 +111,22 @@ void setup() {
   
   // Initialize the M5StickC object
   M5.begin();
-  Wire.begin(0,26);
+  Wire.begin(0,26);  
+#ifdef ARDUINO_M5Stick_C  
   M5.Lcd.setRotation(3);
+#endif
+
   M5.Lcd.fillScreen(BLACK);
   M5.Lcd.setCursor(0, 0, 2);
 
+#ifdef ARDUINO_M5Stack_Core_ESP32
+  M5.Lcd.setTextSize(2); // 15px
+#endif 
+
+#ifdef ARDUINO_M5Stack_Core_ESP32
+  M5.Power.begin();
+  Serial.printf("Currently charging %d\n", battery_power());
+#endif
   // scan_wifi_networks();
 
   int networks_found = 0;
@@ -161,12 +178,12 @@ void clear_wifi() {
   Serial.printf("Resetting WiFi, current status %d\n", WiFi.status());
   WiFi.disconnect(true, true); // Switch off WiFi and forget any AP config
   WiFi.mode(WIFI_STA);  
-  delay(500);
+  delay(200);
   
   Serial.printf("Resetting WiFi complete, current status %d\n", WiFi.status());  
   // It takes a little while to completely disconnect, if we don't do this 
   // the next connect may fail 
-  delay(500);
+  delay(400);
 }
 
 int find_and_join_light_wifi(int *networks_found) {
@@ -215,7 +232,7 @@ int find_and_join_light_wifi(int *networks_found) {
         // Setting the hostname
         // WiFi.setHostname("controller");
   
-        int wait_tests = 10;
+        int wait_tests = 5;
         while (WiFi.status() != WL_CONNECTED && wait_tests-- > 0) {
           Serial.printf("... WiFi status %d\n", WiFi.status());
           delay(500);
@@ -264,7 +281,7 @@ int find_and_join_light_wifi(int *networks_found) {
        
       // Switch off WiFi and forget any prior AP config
       clear_wifi();                     
-      delay(1000);
+      delay(400);
   }  
   
   return -1;
@@ -470,6 +487,14 @@ int send_set_cmd(uint8_t setting, uint8_t value) {
 
 int set_mode = -1;
 
+float getBatteryLevel() {
+#ifdef ARDUINO_M5Stack_Core_ESP32
+  return (float) M5.Power.getBatteryLevel() / 100.0f;
+#else  
+  return getStickBatteryLevel(M5.Axp.GetBatVoltage());
+#endif
+}
+
 void update_screen_status() {
   M5.Lcd.fillScreen(BLACK);
   M5.Lcd.setCursor(0, 0, 2);
@@ -488,7 +513,7 @@ void update_screen_status() {
       if (saturation != -1) 
         M5.Lcd.printf("Sat. %d", saturation);
       M5.Lcd.println(); 
-      M5.Lcd.printf("Battery %0.1f %%\n", getBatteryLevel(M5.Axp.GetBatVoltage()) * 100);
+      M5.Lcd.printf("Battery %0.1f %%\n", getBatteryLevel() * 100);
       break;
     case 0:   
       if (light_on != -1) 
@@ -519,33 +544,101 @@ void update_screen_status() {
   // M5.Lcd.println(WiFi.localIP());
 }
 
+void screen_off() {
+#ifdef ARDUINO_M5Stack_Core_ESP32
+  M5.Lcd.setBrightness(0);
+#else
+  M5.Axp.SetLDO2(false);  
+#endif
+}
+
+void screen_on() {
+#ifdef ARDUINO_M5Stack_Core_ESP32
+  M5.Lcd.setBrightness(255);
+#else  
+  // Turn on tft backlight voltage output
+  M5.Axp.SetLDO2(true);  
+#endif
+}
+
+int down_pressed() {
+#ifdef ARDUINO_M5Stack_Core_ESP32
+  return M5.BtnA.wasPressed();
+#else
+  // 0x01 long press(1s), 0x02 short press
+  return M5.Axp.GetBtnPress() == 0x02;
+#endif  
+}
+
+int up_pressed() {
+#ifdef ARDUINO_M5Stack_Core_ESP32
+  return M5.BtnC.wasPressed();
+#else
+  // 0x01 long press(1s), 0x02 short press
+  return M5.BtnB.wasPressed();
+#endif    
+}
+
+int home_pressed() {
+#ifdef ARDUINO_M5Stack_Core_ESP32
+  return M5.BtnB.wasPressed();
+#else
+  return M5.BtnA.wasPressed();
+#endif
+}
+
+int battery_power() {
+#ifdef ARDUINO_M5Stack_Core_ESP32
+  return !M5.Power.isCharging();
+#else 
+  return !M5.Axp.GetIusbinData();
+#endif  
+}
+
+void test_screen_idle_off() {
+  if (millis() - last_button_millis > 10000 && battery_power() && !lcd_off) {
+    screen_off();
+    lcd_off = 1;
+    Serial.printf("Battery %% is %f\n", getBatteryLevel());
+  }  
+}
+
+int button_screen_on() {
+  if (lcd_off) {
+    screen_on();
+    lcd_off = 0;
+    return 1;
+  }
+  return 0;
+}
+
 void loop() {
   read_udp(udp_1112_fd);
   read_udp(udp_2525_fd);
 
   int button_pressed = 0xff;
 
-  if (millis() - last_button_millis > 10000 && !lcd_off) {
-    lcd_off = 1;
-    M5.Axp.SetLDO2(false);
-    Serial.printf("Battery %% is %f\n", getBatteryLevel(M5.Axp.GetBatVoltage()));
-  }
+  test_screen_idle_off();
   
   M5.BtnA.read();
-  if (M5.BtnA.wasPressed()) {
+  M5.BtnB.read();
+#ifdef ARDUINO_M5Stack_Core_ESP32
+  M5.BtnC.read();
+#endif
+  
+  if (home_pressed()) {
     button_pressed = 0;
     Serial.println("Home button pressed");
-    Serial.printf("Battery %% is %f\n", getBatteryLevel(M5.Axp.GetBatVoltage()));
+    Serial.printf("Battery %% is %f\n", getBatteryLevel());
   }
 
   // 0x01 long press(1s), 0x02 short press
-  if (M5.Axp.GetBtnPress() == 0x02) {
+  if (down_pressed()) {
     button_pressed = -1;
     Serial.println("Power button pressed");
   }
 
-  M5.BtnB.read();
-  if (M5.BtnB.wasPressed()) {
+  if (up_pressed()) {
     button_pressed = 1;
     Serial.println("Side button pressed");
     if (set_mode == -1) 
@@ -554,11 +647,7 @@ void loop() {
 
   if (button_pressed != 0xff) {
     last_button_millis = millis();
-    if (lcd_off) {
-      // Turn on tft backlight voltage output
-      M5.Axp.SetLDO2(true);
-      lcd_off = 0;
-    } else {
+    if (!button_screen_on()) {
       int change = button_pressed;
       if (button_pressed == 0) {
         set_mode++;

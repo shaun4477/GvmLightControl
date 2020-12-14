@@ -2,7 +2,7 @@
 
 static const float levels[] = {4.13, 4.06, 3.98, 3.92, 3.87, 3.82, 3.79, 3.77, 3.74, 3.68, 3.45, 3.00};
 
-float getBatteryLevel(float voltage) {
+float getStickBatteryLevel(float voltage) {
   float level = 1;
   if (voltage >= levels[0]) {
     level = 1;
