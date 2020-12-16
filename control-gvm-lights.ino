@@ -7,6 +7,7 @@
 #error "This code works on m5stick-c or m5stack core"
 #endif
 #include <lwip/sockets.h>
+#include <esp_wifi.h>
 #include <lwip/netdb.h>
 #include <errno.h>
 
@@ -96,25 +97,48 @@ int brightness = -1;
 int cct = -1;
 int saturation = -1;
 
+#define DEBUG
+
 void setup() {
   broadcast_addr.sin_family = AF_INET;
   broadcast_addr.sin_port = htons(2525);
   broadcast_addr.sin_addr.s_addr = INADDR_BROADCAST;  
 
   Serial.begin(115200);
+  Serial.println("M5 starting...\n");
+  Serial.printf("Log level set to %d\n", ARDUHAL_LOG_LEVEL);
 
-#if DEBUG
+#ifdef DEBUG
   esp_log_level_set("*", ESP_LOG_VERBOSE);
   esp_log_level_set("wifi", ESP_LOG_VERBOSE);
   esp_log_level_set("dhcpc", ESP_LOG_VERBOSE);
 #endif
+
+  Serial.printf("Initializing WiFi\n");
+
+  WiFi.persistent(false);
+  Serial.printf("Persistent set to false\n");
   
-  // Initialize the M5StickC object
-  M5.begin();
+  WiFi.mode(WIFI_MODE_STA);
+  Serial.printf("Mode set to station\n");
+
+  WiFi.onEvent(WiFiStationDisconnected, SYSTEM_EVENT_STA_DISCONNECTED);
+  WiFi.onEvent(WiFiEvents, SYSTEM_EVENT_MAX);
+  
+  // Initialize the M5 object. Do NOT reset the Serial object, for 
+  // some reason if we do that after any ESP32 log function 
+  // has been called all further log_e/log_d/log_i will stop working
+  M5.begin(true, true, false);
+  
   Wire.begin(0,26);  
+  
 #ifdef ARDUINO_M5Stick_C  
   M5.Lcd.setRotation(3);
 #endif
+
+  log_e("Testing ERROR");
+  log_i("Testing INFO");
+  log_d("Testing DEBUG");
 
   M5.Lcd.fillScreen(BLACK);
   M5.Lcd.setCursor(0, 0, 2);
@@ -175,15 +199,41 @@ void scan_wifi_networks() {
 }
 
 void clear_wifi() {
-  Serial.printf("Resetting WiFi, current status %d\n", WiFi.status());
+  Serial.printf("Resetting WiFi, current status %d (from core %d)\n", WiFi.status(), xPortGetCoreID());
   WiFi.disconnect(true, true); // Switch off WiFi and forget any AP config
+  WiFi.persistent(false);
   WiFi.mode(WIFI_STA);  
-  delay(200);
+  
+  delay(100);
   
   Serial.printf("Resetting WiFi complete, current status %d\n", WiFi.status());  
   // It takes a little while to completely disconnect, if we don't do this 
   // the next connect may fail 
-  delay(400);
+  delay(300);
+}
+
+static int disconnected = 0;
+
+void WiFiEvents(WiFiEvent_t event, WiFiEventInfo_t info) {
+  /* Not safe for writes from task callback 
+  Serial.flush();
+  Serial.printf("!! Got WiFi event %d\n", event);
+  Serial.printf("From %d\n", xPortGetCoreID());
+  Serial.flush();
+  */
+}
+
+void WiFiStationDisconnected(WiFiEvent_t event, WiFiEventInfo_t info) {
+  // Handling function code
+  /* 
+  Serial.flush();
+  Serial.printf("!! Disconnected!!\n");
+  Serial.printf("!! Disconnected!!\n");
+  Serial.printf("!! Disconnected!!\n");
+  Serial.printf("From %d\n", xPortGetCoreID());
+  Serial.flush();
+  */
+  disconnected = 1;
 }
 
 int find_and_join_light_wifi(int *networks_found) {
@@ -191,7 +241,7 @@ int find_and_join_light_wifi(int *networks_found) {
     *networks_found = 0;
     
   // Switch off WiFi and forget any prior AP config
-  clear_wifi();
+  // clear_wifi();
     
   // WiFi.scanNetworks will return the number of networks found
   int n = WiFi.scanNetworks();
@@ -203,7 +253,7 @@ int find_and_join_light_wifi(int *networks_found) {
   Serial.printf("%d networks available\n", n);
   for (int i = 0; i < n; ++i) {
       // Print SSID and RSSI for each network found
-      Serial.printf("%d: %s (%d, %s, %d) %s\n", 
+      Serial.printf("Found %d: %s (%d, %s, %d) %s\n", 
                     i + 1, WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.BSSIDstr(i).c_str(),WiFi.channel(i), 
                     WiFi.encryptionType(i) == WIFI_AUTH_OPEN?" ":"*");
                     
@@ -218,30 +268,38 @@ int find_and_join_light_wifi(int *networks_found) {
       int connection_attempts = 0;
 
       while (connection_attempts++ < 2) {
+        Serial.printf("Updating connection info on screen\n");
+
         M5.Lcd.fillScreen(BLACK);
-        M5.Lcd.setCursor(0, 0, 2);
+        M5.Lcd.setCursor(0, 0, 2);        
         M5.Lcd.printf("Trying\nSSID %s\nBSSID %s\nAttempt %d\n", 
                       WiFi.SSID(i).c_str(), WiFi.BSSIDstr(i).c_str(), connection_attempts);
 
+        Serial.printf("Dropping any existing WiFi\n");
         clear_wifi();
         
         // Connect to the Access Point
-        Serial.printf("Trying to connect to %s\n", WiFi.BSSIDstr(i).c_str());      
+        Serial.printf("Trying to connect to %s, current status %d\n", WiFi.BSSIDstr(i).c_str(), WiFi.status());      
+        disconnected = 0;
         WiFi.begin(ssid, password, WiFi.channel(i), WiFi.BSSID(i));
+
+        Serial.printf("Connection begun");
         
         // Setting the hostname
         // WiFi.setHostname("controller");
   
-        int wait_tests = 5;
-        while (WiFi.status() != WL_CONNECTED && wait_tests-- > 0) {
+        int wait_tests = 35;
+        while (WiFi.status() != WL_CONNECTED && !disconnected && wait_tests-- > 0) {
           Serial.printf("... WiFi status %d\n", WiFi.status());
-          delay(500);
+          delay(100);
         }
-        
-        if (!wait_tests)  {
-          Serial.printf("Connect timed out, status %d\n", WiFi.status());
-          continue;
-        }
+
+        Serial.printf("Finished waiting, status %d disconnected %d tests remaining %d\n", WiFi.status(), disconnected, wait_tests);
+
+        if (WiFi.status() == WL_CONNECTED)
+          break;
+          
+        Serial.printf("Connect timed out, status %d\n", WiFi.status());
       }
 
       if (WiFi.status() != WL_CONNECTED) {
@@ -281,7 +339,6 @@ int find_and_join_light_wifi(int *networks_found) {
        
       // Switch off WiFi and forget any prior AP config
       clear_wifi();                     
-      delay(400);
   }  
   
   return -1;
