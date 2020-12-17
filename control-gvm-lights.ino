@@ -11,8 +11,6 @@
 #include <lwip/netdb.h>
 #include <errno.h>
 
-struct sockaddr_in broadcast_addr;
-
 const char* ssid = "GVM_LED";
 const char* password =  "gvm_admin";
 
@@ -100,10 +98,6 @@ int saturation = -1;
 #define DEBUG
 
 void setup() {
-  broadcast_addr.sin_family = AF_INET;
-  broadcast_addr.sin_port = htons(2525);
-  broadcast_addr.sin_addr.s_addr = INADDR_BROADCAST;  
-
   Serial.begin(115200);
   Serial.println("M5 starting...\n");
   Serial.printf("Log level set to %d\n", ARDUHAL_LOG_LEVEL);
@@ -114,17 +108,6 @@ void setup() {
   esp_log_level_set("dhcpc", ESP_LOG_VERBOSE);
 #endif
 
-  Serial.printf("Initializing WiFi\n");
-
-  WiFi.persistent(false);
-  Serial.printf("Persistent set to false\n");
-  
-  WiFi.mode(WIFI_MODE_STA);
-  Serial.printf("Mode set to station\n");
-
-  WiFi.onEvent(WiFiStationDisconnected, SYSTEM_EVENT_STA_DISCONNECTED);
-  WiFi.onEvent(WiFiEvents, SYSTEM_EVENT_MAX);
-  
   // Initialize the M5 object. Do NOT reset the Serial object, for 
   // some reason if we do that after any ESP32 log function 
   // has been called all further log_e/log_d/log_i will stop working
@@ -239,9 +222,24 @@ void WiFiStationDisconnected(WiFiEvent_t event, WiFiEventInfo_t info) {
 int find_and_join_light_wifi(int *networks_found) {
   if (networks_found)
     *networks_found = 0;
+
+  Serial.printf("Initializing WiFi\n");
+  
+  WiFi.mode(WIFI_MODE_STA);
+  Serial.printf("Mode set to station\n");
+
+  WiFi.onEvent(WiFiStationDisconnected, SYSTEM_EVENT_STA_DISCONNECTED);
+  WiFi.onEvent(WiFiEvents, SYSTEM_EVENT_MAX);
+
+  // First try to connect to any remembered AP
+  wifi_config_t current_conf;
+  if (esp_wifi_get_config(WIFI_IF_STA, &current_conf) == ESP_OK) {
+    if (!try_connect_wifi((char *) current_conf.sta.ssid, (char *) current_conf.sta.password, current_conf.sta.channel, current_conf.sta.bssid))
+      return 0;  
+  }
     
   // Switch off WiFi and forget any prior AP config
-  // clear_wifi();
+  clear_wifi();
     
   // WiFi.scanNetworks will return the number of networks found
   int n = WiFi.scanNetworks();
@@ -252,96 +250,121 @@ int find_and_join_light_wifi(int *networks_found) {
 
   Serial.printf("%d networks available\n", n);
   for (int i = 0; i < n; ++i) {
-      // Print SSID and RSSI for each network found
-      Serial.printf("Found %d: %s (%d, %s, %d) %s\n", 
-                    i + 1, WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.BSSIDstr(i).c_str(),WiFi.channel(i), 
-                    WiFi.encryptionType(i) == WIFI_AUTH_OPEN?" ":"*");
-                    
-      if (strcmp(WiFi.SSID(i).c_str(), ssid))
-        continue;
+    // Print SSID and RSSI for each network found
+    Serial.printf("Found %d: %s (%d, %s, %d) %s\n", 
+                  i + 1, WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.BSSIDstr(i).c_str(), WiFi.channel(i), 
+                  WiFi.encryptionType(i) == WIFI_AUTH_OPEN?" ":"*");
+                  
+    if (strcmp(WiFi.SSID(i).c_str(), ssid))
+      continue;
 
-      (*networks_found)++;
+    (*networks_found)++;
+    if (!try_connect_wifi(WiFi.SSID(i).c_str(), password, WiFi.channel(i), WiFi.BSSID(i)))
+      return 0;
+  }
 
-      // We try connecting to each AP at least twice because 
-      // sometimes the first connection fails for some strange
-      // reason (error in the log: 'E (6714) wifi: Set status to INIT.')
-      int connection_attempts = 0;
-
-      while (connection_attempts++ < 2) {
-        Serial.printf("Updating connection info on screen\n");
-
-        M5.Lcd.fillScreen(BLACK);
-        M5.Lcd.setCursor(0, 0, 2);        
-        M5.Lcd.printf("Trying\nSSID %s\nBSSID %s\nAttempt %d\n", 
-                      WiFi.SSID(i).c_str(), WiFi.BSSIDstr(i).c_str(), connection_attempts);
-
-        Serial.printf("Dropping any existing WiFi\n");
-        clear_wifi();
-        
-        // Connect to the Access Point
-        Serial.printf("Trying to connect to %s, current status %d\n", WiFi.BSSIDstr(i).c_str(), WiFi.status());      
-        disconnected = 0;
-        WiFi.begin(ssid, password, WiFi.channel(i), WiFi.BSSID(i));
-
-        Serial.printf("Connection begun");
-        
-        // Setting the hostname
-        // WiFi.setHostname("controller");
-  
-        int wait_tests = 35;
-        while (WiFi.status() != WL_CONNECTED && !disconnected && wait_tests-- > 0) {
-          Serial.printf("... WiFi status %d\n", WiFi.status());
-          delay(100);
-        }
-
-        Serial.printf("Finished waiting, status %d disconnected %d tests remaining %d\n", WiFi.status(), disconnected, wait_tests);
-
-        if (WiFi.status() == WL_CONNECTED)
-          break;
-          
-        Serial.printf("Connect timed out, status %d\n", WiFi.status());
-      }
-
-      if (WiFi.status() != WL_CONNECTED) {
-        Serial.printf("Connect failed, status %d, moving on\n", WiFi.status());
-        continue;
-      }
-      
-      Serial.print("Connected to the WiFi network. IP: ");
-      Serial.println(WiFi.localIP());
-      Serial.printf("Base station is: %s\n", WiFi.BSSIDstr().c_str());
-      Serial.printf("Receive strength is: %d\n", WiFi.RSSI());
-
-      // Listen on any incoming IP address for UDP port 2525
-      // udp.begin(2525);
-      open_udp_port(&udp_2525_fd, 2525);
-      Serial.printf("Listening port 2525 with FD %d\n", udp_2525_fd);
-
-      open_udp_port(&udp_1112_fd, 1112);
-      Serial.printf("Listening port 1112 with FD %d\n", udp_1112_fd);
-
-      // Broadcast the starting message to ask the light(s) to report 
-      Serial.println("Broadcasting first connect message\n");
-      send_hello_msg();
-
-      Serial.println("Waiting for light message");
-      
-      int waits = 100;
-      while (waits-- >= 0) {
-        if (read_udp(udp_1112_fd)) {
-          Serial.println("Received light message, proceeding");
-          return 0;
-        }
-        delay(20); 
-      }
-
-      Serial.println("No packet received, moving on to other networks");  
-       
-      // Switch off WiFi and forget any prior AP config
-      clear_wifi();                     
-  }  
-  
   return -1;
+}
+
+int try_connect_wifi(const char *ssid, const char *password, int channel, uint8_t *bssid) {
+  // We try connecting to each AP at least twice because 
+  // sometimes the first connection fails for some strange
+  // reason (error in the log: 'E (6714) wifi: Set status to INIT.')
+  int connection_attempts = 0;
+
+  while (connection_attempts++ < 2) {
+    Serial.printf("Updating connection info on screen\n");
+
+    M5.Lcd.fillScreen(BLACK);
+    M5.Lcd.setCursor(0, 0, 2);        
+    M5.Lcd.printf("Trying\nSSID %s\nBSSID %02x:%02x:%02x:%02x:%02x:%02x\nAttempt %d\n", 
+                  ssid, 
+                  bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5], 
+                  connection_attempts);
+
+    /*
+    Serial.printf("Dropping any existing WiFi\n");
+    clear_wifi();
+    */
+    
+    // Connect to the Access Point
+    Serial.printf("Trying to connect to %02x:%02x:%02x:%02x:%02x:%02x, current status %d\n", 
+                  bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5],
+                  WiFi.status());      
+                  
+    disconnected = 0;
+    WiFi.begin(ssid, password, channel, bssid);
+
+    Serial.printf("Connection begun");
+    
+    // Setting the hostname
+    // WiFi.setHostname("controller");
+
+    int wait_tests = 35;
+    while (WiFi.status() != WL_CONNECTED && !disconnected && wait_tests-- > 0) {
+      Serial.printf("... WiFi status %d\n", WiFi.status());
+      delay(100);
+    }
+
+    Serial.printf("Finished waiting, status %d disconnected %d tests remaining %d\n", WiFi.status(), disconnected, wait_tests);
+
+    if (WiFi.status() == WL_CONNECTED)
+      break;
+      
+    Serial.printf("Connect timed out, status %d\n", WiFi.status());
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.printf("Connect failed, status %d, moving on\n", WiFi.status());
+    return -1;
+  }
+  
+  if (!test_light_connection()) {
+    Serial.println("Connected");
+    return 0;
+  }
+
+  return -1;
+}
+
+int test_light_connection() {
+  Serial.print("Connected to the WiFi network. IP: ");
+  Serial.println(WiFi.localIP());
+  Serial.printf("Base station is: %s\n", WiFi.BSSIDstr().c_str());
+  Serial.printf("Receive strength is: %d\n", WiFi.RSSI());
+
+  // Listen on any incoming IP address for UDP port 2525
+  // udp.begin(2525);
+  open_udp_port(&udp_2525_fd, 2525);
+  Serial.printf("Listening port 2525 with FD %d\n", udp_2525_fd);
+
+  open_udp_port(&udp_1112_fd, 1112);
+  Serial.printf("Listening port 1112 with FD %d\n", udp_1112_fd);
+
+  // Broadcast the starting message to ask the light(s) to report 
+  Serial.println("Broadcasting first connect message\n");
+  send_hello_msg();
+
+  Serial.println("Waiting for light message");
+  
+  int waits = 60;
+  while (waits-- >= 0) {
+    if (read_udp(udp_1112_fd)) {
+      Serial.println("Received light message, proceeding");
+      return 0;
+    }
+    delay(20); 
+  }
+
+  return -1;
+}
+
+int broadcast_udp(const void *d, int len) {
+  struct sockaddr_in broadcast_addr;
+  broadcast_addr.sin_family = AF_INET;
+  broadcast_addr.sin_port = htons(2525);
+  broadcast_addr.sin_addr.s_addr = INADDR_BROADCAST;    
+  return sendto(udp_2525_fd, d, len, 0, (const sockaddr *) &broadcast_addr, sizeof(broadcast_addr));   
 }
 
 int open_udp_port(int *fd, int port) {
@@ -508,7 +531,7 @@ int send_hello_msg() {
     return -1;
 
   Serial.printf("Sending hello msg, '%.*s'\n", strlen(first_connect), first_connect);
-  int rc = sendto(udp_2525_fd, first_connect, strlen(first_connect), 0, (const sockaddr *) &broadcast_addr, sizeof(broadcast_addr)); 
+  int rc = broadcast_udp(first_connect, strlen(first_connect));
 
   return 0;
 }
@@ -537,8 +560,8 @@ int send_set_cmd(uint8_t setting, uint8_t value) {
   shortToHex(crc, encoded_cmd_buffer + sizeof(encoded_cmd_buffer) - 4);
   
   Serial.printf("Sending command with len %d, '%.*s'\n", sizeof(encoded_cmd_buffer), sizeof(encoded_cmd_buffer), encoded_cmd_buffer);
-  
-  sendto(udp_2525_fd, encoded_cmd_buffer, sizeof(encoded_cmd_buffer), 0, (const sockaddr *) &broadcast_addr, sizeof(broadcast_addr)); 
+
+  broadcast_udp(encoded_cmd_buffer, sizeof(encoded_cmd_buffer));
   return 0;
 }
 
@@ -788,26 +811,26 @@ void loop() {
     char inChar = Serial.read();
     switch (inChar) {
       case 'o': {
-        int rc = sendto(udp_2525_fd, on_cmd, strlen(on_cmd), 0, (const sockaddr *) &broadcast_addr, sizeof(broadcast_addr)); 
+        int rc = broadcast_udp(on_cmd, strlen(on_cmd));
         Serial.print("Send on ");
         Serial.println(rc);
         break;
       }
       case 'O': {
-        int rc = sendto(udp_2525_fd, off_cmd, strlen(off_cmd), 0, (const sockaddr *) &broadcast_addr, sizeof(broadcast_addr)); 
+        int rc = broadcast_udp(off_cmd, strlen(off_cmd));
         Serial.print("Send off ");
         Serial.println(rc);
         break;
       }
       case 'b': {
-        int rc = sendto(udp_2525_fd, bright_11, strlen(bright_11), 0, (const sockaddr *) &broadcast_addr, sizeof(broadcast_addr)); 
+        int rc = broadcast_udp(bright_11, strlen(bright_11));
         Serial.print("Send bright 11 ");
         Serial.println(rc);
         break;   
       }
       case 'r': {
         String toSend = Serial.readStringUntil(';');
-        int rc = sendto(udp_2525_fd, toSend.c_str(), toSend.length(), 0, (const sockaddr *) &broadcast_addr, sizeof(broadcast_addr)); 
+        int rc = broadcast_udp(toSend.c_str(), toSend.length());
         Serial.printf("Send %d '%s' %d\n", toSend.length(), toSend.c_str(), rc);
         break;   
       }
@@ -819,7 +842,7 @@ void loop() {
         shortToHex(crc, crc_str);
         crc_str[4] = '\0';
         toSend += crc_str;
-        int rc = sendto(udp_2525_fd, toSend.c_str(), toSend.length(), 0, (const sockaddr *) &broadcast_addr, sizeof(broadcast_addr)); 
+        int rc = broadcast_udp(toSend.c_str(), toSend.length());
         Serial.printf("Send %d '%s' %d\n", toSend.length(), toSend.c_str(), rc);
         break;   
       }      
