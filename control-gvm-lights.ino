@@ -624,6 +624,7 @@ void update_screen_status() {
   if (lastUpdate != o) {
     M5.Lcd.fillScreen(BLACK);
     M5.Lcd.setCursor(0, 0, 2);
+    M5.Lcd.setTextFont(set_mode == -1 ? 2 : 4);
     M5.Lcd.print(o);    
   }
   
