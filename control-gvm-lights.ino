@@ -10,6 +10,7 @@
 #include <esp_wifi.h>
 #include <lwip/netdb.h>
 #include <errno.h>
+#include <StreamString.h>
 
 const char* ssid = "GVM_LED";
 const char* password =  "gvm_admin";
@@ -210,8 +211,6 @@ void WiFiStationDisconnected(WiFiEvent_t event, WiFiEventInfo_t info) {
   // Handling function code
   /* 
   Serial.flush();
-  Serial.printf("!! Disconnected!!\n");
-  Serial.printf("!! Disconnected!!\n");
   Serial.printf("!! Disconnected!!\n");
   Serial.printf("From %d\n", xPortGetCoreID());
   Serial.flush();
@@ -576,52 +575,59 @@ float getBatteryLevel() {
 }
 
 void update_screen_status() {
-  M5.Lcd.fillScreen(BLACK);
-  M5.Lcd.setCursor(0, 0, 2);
+  StreamString o;
+  static String lastUpdate;
+
   switch (set_mode) {
     case -1:
-      M5.Lcd.printf("BS: %s\n", WiFi.BSSIDstr().c_str());
+      o.printf("BS: %s\n", WiFi.BSSIDstr().c_str());
       if (light_on != -1) 
-        M5.Lcd.printf("Light On %d\n", light_on);
+        o.printf("Light On %d\n", light_on);
       if (hue != -1) 
-        M5.Lcd.printf("Hue %d ", hue);
+        o.printf("Hue %d ", hue);
       if (brightness != -1) 
-        M5.Lcd.printf("Bright. %d", brightness);
-      M5.Lcd.println();
+        o.printf("Bright. %d", brightness);
+      o.println();
       if (cct != -1) 
-        M5.Lcd.printf("CCT %d ", cct);
+        o.printf("CCT %d ", cct);
       if (saturation != -1) 
-        M5.Lcd.printf("Sat. %d", saturation);
-      M5.Lcd.println(); 
-      M5.Lcd.printf("Battery %0.1f %%\n", getBatteryLevel() * 100);
+        o.printf("Sat. %d", saturation);
+      o.println(); 
+      o.printf("Battery %0.1f %%\n", getBatteryLevel() * 100);
       break;
     case 0:   
       if (light_on != -1) 
-        M5.Lcd.printf("Light On %d\n", light_on);
+        o.printf("Light On %d\n", light_on);
       break;
     case 1:
       if (channel != -1) 
-        M5.Lcd.printf("Channel %d", channel);
+        o.printf("Channel %d", channel);
       break;    
     case 2:
       if (brightness != -1) 
-        M5.Lcd.printf("Bright. %d", brightness);
+        o.printf("Bright. %d", brightness);
       break;    
     case 3:
       if (cct != -1) 
-        M5.Lcd.printf("CCT %d", cct);
+        o.printf("CCT %d", cct);
       break;    
     case 4:
       if (hue != -1) 
-        M5.Lcd.printf("Hue %d", hue);
+        o.printf("Hue %d", hue);
       break;    
     case 5: 
       if (saturation != -1) 
-        M5.Lcd.printf("Saturation %d", saturation);
+        o.printf("Saturation %d", saturation);
       break;    
   }
-  // M5.Lcd.print("IP: ");
-  // M5.Lcd.println(WiFi.localIP());
+
+  if (lastUpdate != o) {
+    M5.Lcd.fillScreen(BLACK);
+    M5.Lcd.setCursor(0, 0, 2);
+    M5.Lcd.print(o);    
+  }
+  
+  lastUpdate = o;
 }
 
 void screen_off() {
