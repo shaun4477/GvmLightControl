@@ -1,4 +1,3 @@
-#include "WiFi.h"
 #ifdef ARDUINO_M5Stack_Core_ESP32
 #include <M5Stack.h>
 #elif defined(ARDUINO_M5Stick_C) 
@@ -6,6 +5,8 @@
 #else 
 #error "This code works on m5stick-c or m5stack core"
 #endif
+
+#include "WiFi.h"
 #include <lwip/sockets.h>
 #include <esp_wifi.h>
 #include <lwip/netdb.h>
@@ -79,24 +80,39 @@ unsigned long last_button_millis = 0;
 
 const char* first_connect = "4C5409000053000001009474";
 /* Response msg sometimes   "4C540A00305300000220382B19"  */
- 
-const char* off_cmd =   "4C54090030570000010032FE"; // Turn light off
-const char* on_cmd =    "4C54090030570000010122DF"; // Turn light on
-const char* bright_0 =  "4C5409003057000201005C9E"; // Brightness zero 
-const char* bright_11 = "4C54090030570002010BEDF5"; // Brightness to 11%
-const char* bright_1  = "4C5409003057000201014CBF"; // Brightness to 1%
+
+#define LIGHT_VAR_ONOFF      0
+#define LIGHT_VAR_CHANNEL    1
+#define LIGHT_VAR_BRIGHTNESS 2
+#define LIGHT_VAR_CCT        3
+#define LIGHT_VAR_HUE        4
+#define LIGHT_VAR_SATURATION 5
+
+#define LIGHT_MSG_SETVAR     0x57 // Send to set a variable 
+#define LIGHT_MSG_VAR_SET    0x2  // Response to a variable set
+#define LIGHT_MSG_VAR_ALL    0x3  // Periodic message with all variable settings    
 
 int udp_2525_fd = -1;
 int udp_1112_fd = -1;
 
-int light_on = -1;
-int channel = -1;
-int hue = -1;
-int brightness = -1;
-int cct = -1;
-int saturation = -1;
+inline int set_bounded(int val, int min, int max) {
+  if (val < min)
+    return max;
+  else if (val > max)
+    return min;
+  return val;
+}
 
-#define DEBUG
+struct { 
+  int light_on;
+  int channel;
+  int hue;
+  int brightness;
+  int cct;
+  int saturation;
+} light_status = { -1, -1, -1, -1, -1, -1 };
+
+// #define DEBUG
 
 void setup() {
   Serial.begin(115200);
@@ -112,17 +128,19 @@ void setup() {
   // Initialize the M5 object. Do NOT reset the Serial object, for 
   // some reason if we do that after any ESP32 log function 
   // has been called all further log_e/log_d/log_i will stop working
+  Serial.println("Initializing M5...");
   M5.begin(true, true, false);
-  
-  Wire.begin(0,26);  
+  Serial.println("... done\n");
   
 #ifdef ARDUINO_M5Stick_C  
   M5.Lcd.setRotation(3);
 #endif
 
+#ifdef DEBUG
   log_e("Testing ERROR");
   log_i("Testing INFO");
   log_d("Testing DEBUG");
+#endif
 
   M5.Lcd.fillScreen(BLACK);
   M5.Lcd.setCursor(0, 0, 2);
@@ -135,6 +153,7 @@ void setup() {
   M5.Power.begin();
   Serial.printf("Currently charging %d\n", battery_power());
 #endif
+
   // scan_wifi_networks();
 
   int networks_found = 0;
@@ -228,7 +247,7 @@ int find_and_join_light_wifi(int *networks_found) {
   Serial.printf("Mode set to station\n");
 
   WiFi.onEvent(WiFiStationDisconnected, SYSTEM_EVENT_STA_DISCONNECTED);
-  WiFi.onEvent(WiFiEvents, SYSTEM_EVENT_MAX);
+  // WiFi.onEvent(WiFiEvents, SYSTEM_EVENT_MAX);
 
   // First try to connect to any remembered AP
   wifi_config_t current_conf;
@@ -469,39 +488,42 @@ int read_udp(int fd) {
       Serial.printf("  Length %d\n  Device ID %d\n  Device Type 0x%x\n  Message Type %d\n",
                     hexDecode[2], hexDecode[3], hexDecode[4], hexDecode[5]);
                         
-      if (hexDecode[5] == 3) {
+      if (hexDecode[5] == LIGHT_MSG_VAR_ALL) {
         /* Status message sent periodically by the lights */
         /* Save state */
-        light_on = hexDecode[6]; // 0 if light is currently 'soft' off, 1 if it's on
-        channel = hexDecode[7] - 1;
-        brightness = hexDecode[8];
-        cct = hexDecode[9] * 100;
-        hue = hexDecode[10] * 5;
-        saturation = hexDecode[11];
+        light_status.light_on   = hexDecode[6]; // 0 if light is currently 'soft' off, 1 if it's on
+        light_status.channel    = hexDecode[7];
+        light_status.brightness = hexDecode[8];
+        light_status.cct        = hexDecode[9];
+        light_status.hue        = hexDecode[10];
+        light_status.saturation = hexDecode[11];
         Serial.printf("  Status Message: Light On %d Channel %d Brightness %d%% CCT %d Hue %d Saturation %d\n",
                       hexDecode[6], hexDecode[7] - 1, hexDecode[8], hexDecode[9] * 100, hexDecode[10] * 5, hexDecode[11]);
         update_screen_status();
-      } else if (hexDecode[5] == 2) {
+      } else if (hexDecode[5] == LIGHT_MSG_VAR_SET) {
         /* Updated message, send in response to an update message 
         e.g '4C54080030020002003A89' received from sending a brightness zero message '4C5409003057000201005C9E'
         or  '4C54080030020002030AEA' received from sending a brightness 3% message   '4C5409003057000201036CFD' */
         Serial.printf("  Updated Message: Unknown 1 %d Field %d Value %d\n", 
                       hexDecode[6], hexDecode[7], hexDecode[8]);
         switch (hexDecode[7]) {
-          case 0:
-            light_on = hexDecode[8];
+          case LIGHT_VAR_ONOFF:
+            light_status.light_on = hexDecode[8];
             break;
-          case 2:
-            brightness = hexDecode[8];
+          case LIGHT_VAR_CHANNEL:
+            light_status.channel = hexDecode[8];
             break;
-          case 3:
-            cct = hexDecode[8] * 100;
+          case LIGHT_VAR_BRIGHTNESS:
+            light_status.brightness = hexDecode[8];
             break;
-          case 4:
-            hue = hexDecode[8] * 5;
+          case LIGHT_VAR_CCT:
+            light_status.cct = hexDecode[8];
             break;
-          case 5:
-            saturation = hexDecode[8];
+          case LIGHT_VAR_HUE:
+            light_status.hue = hexDecode[8];
+            break;
+          case LIGHT_VAR_SATURATION:
+            light_status.saturation = hexDecode[8];
             break;            
         }
         update_screen_status();        
@@ -514,7 +536,7 @@ int read_udp(int fd) {
       msgDecode += msglen * 2;
       Serial.printf("RX left %d\n", rx_len);
       if (rx_len >= 6)
-        Serial.printf("%x %x %x\n", hexDecode[0], hexDecode[1], hexDecode[2]);
+        Serial.printf("First bytes of potential next message = %02x %02x %02x\n", hexDecode[0], hexDecode[1], hexDecode[2]);
     }
   }
 
@@ -548,7 +570,7 @@ int send_set_cmd(uint8_t setting, uint8_t value) {
   cmd_buffer[2] = sizeof(cmd_buffer) - 3;
   cmd_buffer[3] = 0x0;
   cmd_buffer[4] = 0x30;
-  cmd_buffer[5] = 0x57;
+  cmd_buffer[5] = LIGHT_MSG_SETVAR;
   cmd_buffer[6] = 0x0;
   cmd_buffer[7] = setting;
   cmd_buffer[8] = 0x1;
@@ -564,7 +586,7 @@ int send_set_cmd(uint8_t setting, uint8_t value) {
   return 0;
 }
 
-int set_mode = -1;
+int screen_mode = -1;
 
 float getBatteryLevel() {
 #ifdef ARDUINO_M5Stack_Core_ESP32
@@ -578,53 +600,53 @@ void update_screen_status() {
   StreamString o;
   static String lastUpdate;
 
-  switch (set_mode) {
+  switch (screen_mode) {
     case -1:
       o.printf("BS: %s\n", WiFi.BSSIDstr().c_str());
-      if (light_on != -1) 
-        o.printf("Light On %d\n", light_on);
-      if (hue != -1) 
-        o.printf("Hue %d ", hue);
-      if (brightness != -1) 
-        o.printf("Bright. %d", brightness);
+      if (light_status.light_on != -1) 
+        o.printf("Light On %d\n", light_status.light_on);
+      if (light_status.hue != -1) 
+        o.printf("Hue %d ", light_status.hue * 5);
+      if (light_status.brightness != -1) 
+        o.printf("Bright. %d", light_status.brightness);
       o.println();
-      if (cct != -1) 
-        o.printf("CCT %d ", cct);
-      if (saturation != -1) 
-        o.printf("Sat. %d", saturation);
+      if (light_status.cct != -1) 
+        o.printf("CCT %d ", light_status.cct * 100);
+      if (light_status.saturation != -1) 
+        o.printf("Sat. %d", light_status.saturation);
       o.println(); 
       o.printf("Battery %0.1f %%\n", getBatteryLevel() * 100);
       break;
-    case 0:   
-      if (light_on != -1) 
-        o.printf("Light On %d\n", light_on);
+    case LIGHT_VAR_ONOFF:   
+      if (light_status.light_on != -1) 
+        o.printf("Light On\n%d", light_status.light_on);
       break;
-    case 1:
-      if (channel != -1) 
-        o.printf("Channel %d", channel);
+    case LIGHT_VAR_CHANNEL:
+      if (light_status.channel != -1) 
+        o.printf("Channel\n%d", light_status.channel - 1);
       break;    
-    case 2:
-      if (brightness != -1) 
-        o.printf("Bright. %d", brightness);
+    case LIGHT_VAR_BRIGHTNESS:
+      if (light_status.brightness != -1) 
+        o.printf("Brightness\n%d%%", light_status.brightness);
       break;    
-    case 3:
-      if (cct != -1) 
-        o.printf("CCT %d", cct);
+    case LIGHT_VAR_CCT:
+      if (light_status.cct != -1) 
+        o.printf("CCT\n%d", light_status.cct * 100);
       break;    
-    case 4:
-      if (hue != -1) 
-        o.printf("Hue %d", hue);
+    case LIGHT_VAR_HUE:
+      if (light_status.hue != -1) 
+        o.printf("Hue\n%d", light_status.hue * 5);
       break;    
-    case 5: 
-      if (saturation != -1) 
-        o.printf("Saturation %d", saturation);
+    case LIGHT_VAR_SATURATION: 
+      if (light_status.saturation != -1) 
+        o.printf("Saturation\n%d%%", light_status.saturation);
       break;    
   }
 
   if (lastUpdate != o) {
     M5.Lcd.fillScreen(BLACK);
     M5.Lcd.setCursor(0, 0, 2);
-    M5.Lcd.setTextFont(set_mode == -1 ? 2 : 4);
+    M5.Lcd.setTextFont(screen_mode == -1 ? 2 : 4);
     M5.Lcd.print(o);    
   }
   
@@ -706,12 +728,9 @@ void loop() {
   int button_pressed = 0xff;
 
   test_screen_idle_off();
-  
-  M5.BtnA.read();
-  M5.BtnB.read();
-#ifdef ARDUINO_M5Stack_Core_ESP32
-  M5.BtnC.read();
-#endif
+
+  // Read buttons before processing state
+  M5.update();
   
   if (home_pressed()) {
     button_pressed = 0;
@@ -719,7 +738,6 @@ void loop() {
     Serial.printf("Battery %% is %f\n", getBatteryLevel());
   }
 
-  // 0x01 long press(1s), 0x02 short press
   if (down_pressed()) {
     button_pressed = -1;
     Serial.println("Power button pressed");
@@ -728,7 +746,7 @@ void loop() {
   if (up_pressed()) {
     button_pressed = 1;
     Serial.println("Side button pressed");
-    if (set_mode == -1) 
+    if (screen_mode == -1) 
       send_hello_msg();
   }
 
@@ -737,67 +755,46 @@ void loop() {
     if (!button_screen_on()) {
       int change = button_pressed;
       if (button_pressed == 0) {
-        set_mode++;
-        if (set_mode > 5)
-          set_mode = -1;
+        screen_mode++;
+        if (screen_mode > 5)
+          screen_mode = -1;
         update_screen_status();          
-      } else if (change && set_mode != -1) {
+      } else if (change && screen_mode != -1) {
         int8_t newVal;
-        switch (set_mode) {
-          case 0:   
-            newVal = light_on ? 0 : 1;
+        switch (screen_mode) {
+          case LIGHT_VAR_ONOFF:   
+            newVal = light_status.light_on ? 0 : 1;
             /* Optimistic update */
-            light_on = newVal;
+            light_status.light_on = newVal;
             break;
-          case 1:   
-            newVal = (channel + 1) + change;
+          case LIGHT_VAR_CHANNEL:   
+            newVal = set_bounded(light_status.channel + change, 1, 12);
             /* Optimistic update */
-            if (newVal > 12)
-              newVal = 1;
-            else if (newVal < 1)
-              newVal = 12;
-            /* Optimistic update */
-            channel = newVal - 1;
+            light_status.channel = newVal - 1;
             break;
-          case 2:
-            newVal = brightness + change;
-            if (newVal > 100)
-              newVal = 0;
-            else if (newVal < 0)
-              newVal = 100;
+          case LIGHT_VAR_BRIGHTNESS:
+            newVal = set_bounded(light_status.brightness + change, 0, 100);
             /* Optimistic update */
-            brightness = newVal;
+            light_status.brightness = newVal;
             break;    
-          case 3:
-            newVal = (cct / 100) + change; 
-            if (newVal < 32)
-              newVal = 56;
-            else if (newVal > 56)
-              newVal = 32; 
+          case LIGHT_VAR_CCT:
+            newVal = set_bounded(light_status.cct + change, 32, 56); 
             /* Optimistic update */
-            cct = newVal * 100;
+            light_status.cct = newVal;
             break;    
-          case 4:
-            newVal = hue / 5 + change;
-            if (newVal < 0)
-              newVal = 72;
-            else if (newVal > 72)
-              newVal = 0; 
+          case LIGHT_VAR_HUE:
+            newVal = set_bounded(light_status.hue + change, 0, 72);
             /* Optimistic update */
-            hue = newVal * 5;
+            light_status.hue = newVal;
             break;    
-          case 5: 
-            newVal = saturation + change;
-            if (newVal > 100)
-              newVal = 0;
-            else if (newVal < 0)
-              newVal = 100;
+          case LIGHT_VAR_SATURATION: 
+            newVal = set_bounded(light_status.saturation + change, 0, 100);
             /* Optimistic update */
-            saturation = newVal;
+            light_status.saturation = newVal;
             break;          
         }
         
-        send_set_cmd(set_mode, newVal);
+        send_set_cmd(screen_mode, newVal);
     
         /* When switching the light off sometimes we don't get a response 
          *  message. Send a hello message as well so we we'll get a status
@@ -806,7 +803,7 @@ void loop() {
          *  'setting updated' message from the light. Send a hello to get 
          *  a full setting update as well
          */
-        // if (set_mode == 0 && newVal == 0)
+        // if (screen_mode == 0 && newVal == 0)
           send_hello_msg();
       }
     }
@@ -818,19 +815,19 @@ void loop() {
     char inChar = Serial.read();
     switch (inChar) {
       case 'o': {
-        int rc = broadcast_udp(on_cmd, strlen(on_cmd));
+        int rc = send_set_cmd(LIGHT_VAR_ONOFF, 1);
         Serial.print("Send on ");
         Serial.println(rc);
         break;
       }
       case 'O': {
-        int rc = broadcast_udp(off_cmd, strlen(off_cmd));
+        int rc = send_set_cmd(LIGHT_VAR_ONOFF, 0);
         Serial.print("Send off ");
         Serial.println(rc);
         break;
       }
       case 'b': {
-        int rc = broadcast_udp(bright_11, strlen(bright_11));
+        int rc = send_set_cmd(LIGHT_VAR_BRIGHTNESS, 11);
         Serial.print("Send bright 11 ");
         Serial.println(rc);
         break;   
