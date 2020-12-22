@@ -92,6 +92,10 @@ const char* first_connect = "4C5409000053000001009474";
 #define LIGHT_MSG_VAR_SET    0x2  // Response to a variable set
 #define LIGHT_MSG_VAR_ALL    0x3  // Periodic message with all variable settings    
 
+#define INACTIVE_SCREEN_OFF_MILLIS   10000 // Milliseconds since last button press to power down LCD backlight
+#define INACTIVE_POWER_OFF_MILLIS    20000 // Milliseconds since last button press to switch off
+#define INACTIVE_OFF_WHEN_PLUGGED_IN 1     // Whether to do inactive off when plugged in 
+
 int udp_2525_fd = -1;
 int udp_1112_fd = -1;
 
@@ -193,7 +197,7 @@ void scan_wifi_networks() {
       for (int i = 0; i < n; ++i) {
           // Print SSID and RSSI for each network found
           Serial.printf("%d: %s (%d, %s, %d) %s\n", 
-                        i + 1, WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.BSSIDstr(i).c_str(),WiFi.channel(i), 
+                        i + 1, WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.BSSIDstr(i).c_str(), WiFi.channel(i), 
                         WiFi.encryptionType(i) == WIFI_AUTH_OPEN?" ":"*");
           delay(10);
       }
@@ -705,11 +709,17 @@ int battery_power() {
 }
 
 void test_screen_idle_off() {
-  if (millis() - last_button_millis > 10000 && battery_power() && !lcd_off) {
+  if (millis() - last_button_millis > INACTIVE_SCREEN_OFF_MILLIS && 
+      !lcd_off && 
+      (INACTIVE_OFF_WHEN_PLUGGED_IN || battery_power())) {
     screen_off();
     lcd_off = 1;
     Serial.printf("Battery %% is %f\n", getBatteryLevel());
   }  
+  if (millis() - last_button_millis > INACTIVE_POWER_OFF_MILLIS && 
+      (INACTIVE_OFF_WHEN_PLUGGED_IN || battery_power())) {
+    M5.Axp.PowerOff();
+  }
 }
 
 int button_screen_on() {
@@ -770,7 +780,7 @@ void loop() {
           case LIGHT_VAR_CHANNEL:   
             newVal = set_bounded(light_status.channel + change, 1, 12);
             /* Optimistic update */
-            light_status.channel = newVal - 1;
+            light_status.channel = newVal;
             break;
           case LIGHT_VAR_BRIGHTNESS:
             newVal = set_bounded(light_status.brightness + change, 0, 100);
