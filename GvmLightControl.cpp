@@ -230,12 +230,12 @@ int GvmLightControl::test_light_connection() {
   DEBUG("Broadcasting first connect message\n");
   send_hello_msg();
 
-  DEBUG("Waiting for light message");
+  DEBUG("Waiting for light message\n");
   
   int waits = 60;
   while (waits-- >= 0) {
     if (read_udp(udp_1112_fd)) {
-      DEBUG("Received light message, proceeding");
+      DEBUG("Received light message, proceeding\n");
       return 0;
     }
     delay(20); 

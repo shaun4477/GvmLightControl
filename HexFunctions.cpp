@@ -23,11 +23,6 @@ void hexStringToBytes(char *hexstr, int len, unsigned char *out) {
   return; 
 }
 
-void serialPrintHexChar(char c) {
-   if (c < 16) Serial.print("0");
-   Serial.print(c, HEX);
-}
-
 StreamString printAsHex(char *buf, int len, char *prompt) {
   StreamString o;
   o.print(prompt ? prompt : "Hex: ");
@@ -44,20 +39,6 @@ StreamString printAsHex(char *buf, int len, char *prompt) {
       o.print('.');
   o.println();
   return o;  
-}
-void serialPrintAsHex(char *buf, int len, char *prompt) {
-  /*
-  Serial.print(prompt ? prompt : "Hex: ");
-  for (int i = 0; i < len; i++) 
-    serialPrintHexChar(buf[i]);
-  Serial.println();
-  for (int i = 0; i < len; i++) 
-    if (isprint(buf[i]))
-      Serial.print(buf[i]);
-    else
-      Serial.print('.');
-  Serial.println();
-  */
 }
 
 void bytesToHexString(unsigned char *in, int len, char *out) {

@@ -40,6 +40,10 @@ void setup() {
   Serial.println("M5 starting...\n");
   Serial.printf("Log level set to %d\n", ARDUHAL_LOG_LEVEL);
 
+  // For some reason I keep getting Serial driver errors unless I
+  // add this delay
+  delay(100);
+
 #ifdef DEBUG
   esp_log_level_set("*", ESP_LOG_VERBOSE);
   esp_log_level_set("wifi", ESP_LOG_VERBOSE);
@@ -238,10 +242,11 @@ void test_screen_idle_off() {
       (INACTIVE_OFF_WHEN_PLUGGED_IN || battery_power())) {
     screen_off();
     lcd_off = 1;
-    Serial.printf("Battery %% is %f\n", getBatteryLevel());
+    Serial.printf("** Screen off **\nBattery %% is %f\n", getBatteryLevel());
   }  
   if (millis() - last_button_millis > INACTIVE_POWER_OFF_MILLIS && 
       (INACTIVE_OFF_WHEN_PLUGGED_IN || battery_power())) {
+    Serial.printf("** Powering off **\n");
     power_off();
   }
 }
