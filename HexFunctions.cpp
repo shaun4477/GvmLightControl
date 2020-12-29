@@ -1,3 +1,7 @@
+#include <Arduino.h>
+#include <lwip/sockets.h>
+#include "HexFunctions.h"
+
 /* Convert a hexadecimal character to its value */
 uint8_t charToVal(char c) {
   return c >= '0' && c <= '9' ? c - '0' : (c >= 'a' && c <= 'f' ? c - 'a' + 10: (c >= 'A' && c <= 'F' ? c - 'A' + 10: 0));  
@@ -24,7 +28,25 @@ void serialPrintHexChar(char c) {
    Serial.print(c, HEX);
 }
 
+StreamString printAsHex(char *buf, int len, char *prompt) {
+  StreamString o;
+  o.print(prompt ? prompt : "Hex: ");
+  for (int i = 0; i < len; i++) {
+    if (buf[i] < 16)
+      o.print('0');
+    o.print(buf[i], HEX);
+  }
+  o.println();
+  for (int i = 0; i < len; i++) 
+    if (isprint(buf[i]))
+      o.print(buf[i]);
+    else
+      o.print('.');
+  o.println();
+  return o;  
+}
 void serialPrintAsHex(char *buf, int len, char *prompt) {
+  /*
   Serial.print(prompt ? prompt : "Hex: ");
   for (int i = 0; i < len; i++) 
     serialPrintHexChar(buf[i]);
@@ -35,6 +57,7 @@ void serialPrintAsHex(char *buf, int len, char *prompt) {
     else
       Serial.print('.');
   Serial.println();
+  */
 }
 
 void bytesToHexString(unsigned char *in, int len, char *out) {
