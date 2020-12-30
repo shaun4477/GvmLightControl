@@ -7,6 +7,8 @@
 #ifndef GvmLightControl_h
 #define GvmLightControl_h
 
+#include "util/HexFunctions.h"
+
 /* Messages are sent to the lights with UDP broadcast to 255.255.255.255:2525.
  * Messages are received from the lights with UDP broadcast to 255.255.255.255:1112
  * 

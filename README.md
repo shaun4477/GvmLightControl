@@ -1,4 +1,4 @@
-Arduino Sketch to allow the m5stick to control GVM 8000-RGB lights via WiFi
+Arduino Library to allow the ESP32/ESP8266 based boards to control GVM 8000-RGB lights via WiFi
 
 Should be easily portable to any ESP32 based board (e.g m5stack etc). Should also work with other GVM lights with WiFi, but not tested
 

@@ -1,0 +1,19 @@
+{
+  "name": "GvmLightControl",
+  "keywords": "GVM, lights, WiFi",
+  "description": "Arduino library to control GVM lights via WiFi on ESP32 or ESP8266 boards",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shaun477/FlexiTimer2.git"
+  },
+  "authors": [{
+    "name": "shaun4477",
+    "maintainer": true
+  }],
+  "frameworks": [
+    "arduino"
+  ],
+  "platforms": [
+    "espressif32"
+  ]
+}

@@ -5,7 +5,7 @@
 #include <errno.h>
 #include <StreamString.h>
 #include <esp_vfs_dev.h>
-#include "HexFunctions.h"
+#include "util/HexFunctions.h"
 #include "GvmLightControl.h"
 
 static int debugMsgs = 0;
@@ -205,7 +205,7 @@ int GvmLightControl::try_connect_wifi(const char *ssid, const char *password, in
   }
   
   if (!test_light_connection()) {
-    DEBUG("Connected");
+    DEBUG("GVM Light Connected\n");
     return 0;
   }
 

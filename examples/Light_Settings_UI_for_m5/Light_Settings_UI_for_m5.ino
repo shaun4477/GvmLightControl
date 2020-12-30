@@ -6,13 +6,8 @@
 #error "This code works on m5stick-c or m5stack core"
 #endif
 
-#include "WiFi.h"
-#include <lwip/sockets.h>
-#include <esp_wifi.h>
-#include <lwip/netdb.h>
-#include <errno.h>
+#include <WiFi.h>
 #include <StreamString.h>
-#include "HexFunctions.h"
 #include "GvmLightControl.h"
 
 int lcd_off = 0;
