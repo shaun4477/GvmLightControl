@@ -35,10 +35,6 @@ void setup() {
   Serial.println("M5 starting...\n");
   Serial.printf("Log level set to %d\n", ARDUHAL_LOG_LEVEL);
 
-  // For some reason I keep getting Serial driver errors unless I
-  // add this delay
-  delay(100);
-
 #ifdef DEBUG
   esp_log_level_set("*", ESP_LOG_VERBOSE);
   esp_log_level_set("wifi", ESP_LOG_VERBOSE);
@@ -371,7 +367,5 @@ void loop() {
     }
   }
 
-  // We need a delay to allow the Serial driver to run
-  delay(10);
   GVM.wait_msg_or_timeout();
 }
