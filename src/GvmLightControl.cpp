@@ -544,6 +544,9 @@ int GvmLightControl::wait_msg_or_timeout() {
   struct timeval t;
   t.tv_sec = 0;
   t.tv_usec = 10000;
+  FD_ZERO(&readSet);
   FD_SET(udp_1112_fd, &readSet);
   int rc = select(udp_1112_fd + 1, &readSet, NULL, NULL, &t);    
+  if (rc < 0)
+    DEBUG("Wait on FD %d returned %d\n", udp_1112_fd, rc);
 }
