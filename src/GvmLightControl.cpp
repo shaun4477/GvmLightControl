@@ -8,6 +8,15 @@
 #include "util/HexFunctions.h"
 #include "GvmLightControl.h"
 
+
+#ifdef IDF_VER
+// If compiled using ESP IDF with a recent release we use the new enum for WiFi events
+#define DISC_EVENT ARDUINO_EVENT_WIFI_STA_DISCONNECTED
+#else 
+// If compiled using Arduino IDE we need to use the old define 
+#define DISC_EVENT SYSTEM_EVENT_STA_DISCONNECTED
+#endif 
+
 static int debugMsgs = 0;
 #define DEBUG(format, ...) if (debugMsgs) { log_printf(format, ##__VA_ARGS__); };
 
@@ -109,7 +118,7 @@ int GvmLightControl::find_and_join_light_wifi(int *networks_found) {
   WiFi.mode(WIFI_MODE_STA);
   DEBUG("Mode set to station\n");
 
-  WiFi.onEvent(WiFiStationDisconnected, SYSTEM_EVENT_STA_DISCONNECTED);
+  WiFi.onEvent(WiFiStationDisconnected, DISC_EVENT);
   // WiFi.onEvent(WiFiEvents, SYSTEM_EVENT_MAX);
 
   // First try to connect to any remembered AP
@@ -282,7 +291,8 @@ uint16_t calcCrcFromHexStr(const char *str, int len) {
   unsigned char c;
   while (len >= 2) {
     // DEBUG("CRC calc %c%c = ", *(str), *(str + 1));
-    c = (charToVal(*str++) << 4) + charToVal(*str++);
+    c = (charToVal(*str++) << 4);
+    c += charToVal(*str++);
     crc ^= c << 8;
     for (int i = 0; i < 8; i++) {
       if (crc & 0x8000)
@@ -551,4 +561,5 @@ int GvmLightControl::wait_msg_or_timeout() {
     DEBUG("Wait on FD %d returned %d\n", udp_1112_fd, rc);
   if (rc == 1)
     process_messages();
+  return 0;
 }

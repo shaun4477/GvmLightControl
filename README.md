@@ -39,3 +39,6 @@ Once you're done with the capture close the virtual interface with -x
 
 `rvictl -x 00008030-001E39620E50802E`
 
+## Example use
+
+There is an example application that provides a local UI for the library on the m5stick-c (https://shop.m5stack.com/collections/m5-controllers/products/m5stickc-plus-esp32-pico-mini-iot-development-kit) in the examples/Light_Settings_UI_for_m5 directory
